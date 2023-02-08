@@ -8,6 +8,11 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.time.Month;
 import java.util.*;
+import java.util.function.BiConsumer;
+import java.util.function.BinaryOperator;
+import java.util.function.Function;
+import java.util.function.Supplier;
+import java.util.stream.Collector;
 import java.util.stream.Collectors;
 
 import static java.util.stream.Collectors.groupingBy;
@@ -29,6 +34,8 @@ public class UserMealsUtil {
         mealsTo.forEach(System.out::println);
 
         System.out.println(filteredByStreams(meals, LocalTime.of(7, 0), LocalTime.of(12, 0), 2000));
+
+        System.out.println(filteredByStreamsCustomCollector(meals, LocalTime.of(7, 0), LocalTime.of(12, 0), 2000));
 
 
     }
@@ -70,5 +77,75 @@ public class UserMealsUtil {
                 .collect(Collectors.toList());
         return result;
     }
+
+    public static List<UserMealWithExcess> filteredByStreamsCustomCollector(List<UserMeal> meals, LocalTime startTime, LocalTime endTime, int caloriesPerDay) {
+
+        class Accumulator implements Supplier<Accumulator> {
+            final Map<LocalDate, Integer> caloriesMap;
+            final List<UserMeal> meals;
+
+            Accumulator() {
+                caloriesMap = new HashMap<>();
+                meals = new ArrayList<>();
+            }
+
+            @Override
+            public Accumulator get() {
+                return this;
+            }
+        }
+
+        class MealsCollector implements Collector<UserMeal, Accumulator, List<UserMealWithExcess>> {
+
+            @Override
+            public Supplier<Accumulator> supplier() {
+                return new Accumulator();
+            }
+
+            @Override
+            public BiConsumer<Accumulator, UserMeal> accumulator() {
+
+                return (Accumulator acc, UserMeal meal) -> {
+                    LocalDate date = meal.getDateTime().toLocalDate();
+                    Integer calories = meal.getCalories();
+                    if (acc.caloriesMap.containsKey(date)) {
+                        acc.caloriesMap.put(date, acc.caloriesMap.get(date) + calories);
+                    } else {
+                        acc.caloriesMap.put(date, calories);
+                    }
+                    if (TimeUtil.isBetweenHalfOpen(meal.getDateTime().toLocalTime(), startTime, endTime)) {
+                        acc.meals.add(meal);
+                    }
+                };
+            }
+
+            @Override
+            public BinaryOperator<Accumulator> combiner() {
+                return (Accumulator acc1, Accumulator acc2) -> {
+                    acc2.caloriesMap.forEach((key, value) -> acc1.caloriesMap.merge(key, value, Integer::sum));
+                    acc1.meals.addAll(acc2.meals);
+                    return acc1;
+                };
+            }
+
+            @Override
+            public Function<Accumulator, List<UserMealWithExcess>> finisher() {
+                return (Accumulator acc) -> acc.meals.stream()
+                        .map(meal -> new UserMealWithExcess(meal.getDateTime(),
+                                meal.getDescription(),
+                                meal.getCalories(),
+                                acc.caloriesMap.get(meal.getDateTime().toLocalDate()) > caloriesPerDay))
+                        .collect(Collectors.toList());
+            }
+
+            @Override
+            public Set<Characteristics> characteristics() {
+                return Collections.unmodifiableSet(EnumSet.of(Characteristics.UNORDERED)); }
+        }
+
+        return meals.stream().collect(new MealsCollector());
+
+    }
+
 
 }
